@@ -1,16 +1,28 @@
-import os
-import pandas as pd
 import numpy as np
-from scipy import stats
-from env import username, host, password 
-from sklearn.feature_selection import SelectKBest, f_regression, RFE
-from sklearn.model_selection import train_test_split
+import pandas as pd
+
+import acquire
+
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
 
+import warnings
+warnings.filterwarnings('ignore')
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+import scipy.stats as stats
 
+from sklearn.impute import SimpleImputer
 
+def only_single_unit(df):
+    df_filtered = df[df['calculatedfinishedsquarefeet'] < 5000]
+    df_filtered = df_filtered[df_filtered['calculatedfinishedsquarefeet'] >=1000]
+    df_filtered = df_filtered[df_filtered['bedroomcnt'] >=3]
+    df_filtered = df_filtered[df_filtered['bedroomcnt'] <= 10]
+    df_filtered = df_filtered[df_filtered['bathroomcnt'] >2]
+    df_filtered = df_filtered[df_filtered['bathroomcnt'] <7]
+    return df_filtered
 
 def train_validate_test(df, target):
     '''
@@ -44,67 +56,6 @@ def train_validate_test(df, target):
     
     return train, validate, test, X_train, y_train, X_validate, y_validate, X_test, y_test
 
-
-def get_object_cols(df):
-    '''
-    This function takes in a dataframe and identifies the columns that are object types
-    and returns a list of those column names. 
-    '''
-    # create a mask of columns whether they are object type or not
-    mask = np.array(df.dtypes == "object")
-
-        
-    # get a list of the column names that are objects (from the mask)
-    object_cols = df.iloc[:, mask].columns.tolist()
-    
-    return object_cols
-
-def get_numeric_X_cols(X_train, object_cols):
-    '''
-    takes in a dataframe and list of object column names
-    and returns a list of all other columns names, the non-objects. 
-    '''
-    numeric_cols = [col for col in X_train.columns.values if col not in object_cols]
-    
-    return numeric_cols
-
-def min_max_scale(X_train, X_validate, X_test, numeric_cols):
-    '''
-    this function takes in 3 dataframes with the same columns, 
-    a list of numeric column names (because the scaler can only work with numeric columns),
-    and fits a min-max scaler to the first dataframe and transforms all
-    3 dataframes using that scaler. 
-    it returns 3 dataframes with the same column names and scaled values. 
-    '''
-    # create the scaler object and fit it to X_train (i.e. identify min and max)
-    # if copy = false, inplace row normalization happens and avoids a copy (if the input is already a numpy array).
-
-
-    scaler = MinMaxScaler(copy=True).fit(X_train[numeric_cols])
-
-    #scale X_train, X_validate, X_test using the mins and maxes stored in the scaler derived from X_train. 
-    # 
-    X_train_scaled_array = scaler.transform(X_train[numeric_cols])
-    X_validate_scaled_array = scaler.transform(X_validate[numeric_cols])
-    X_test_scaled_array = scaler.transform(X_test[numeric_cols])
-
-    # convert arrays to dataframes
-    X_train_scaled = pd.DataFrame(X_train_scaled_array, 
-                                  columns=numeric_cols).\
-                                  set_index([X_train.index.values])
-
-    X_validate_scaled = pd.DataFrame(X_validate_scaled_array, 
-                                     columns=numeric_cols).\
-                                     set_index([X_validate.index.values])
-
-    X_test_scaled = pd.DataFrame(X_test_scaled_array, 
-                                 columns=numeric_cols).\
-                                 set_index([X_test.index.values])
-
-    
-    return X_train_scaled, X_validate_scaled, X_test_scaled
-
-    
 def handle_outliers(df, col):
     q1 = df[col].quantile(.25)
     q3 = df[col].quantile(.75)
@@ -118,19 +69,74 @@ def handle_outliers(df, col):
     df_out = df.loc[(df[col] > lower_bound) & (df[col] < upper_bound)]
     return df_out
 
-def handle_missing_values(df, prop_required_columns=0.5, prop_required_row=0.75):
-    threshold = int(round(prop_required_columns * len(df.index),0))
-    df = df.dropna(axis=1, thresh=threshold)
-    threshold = int(round(prop_required_row * len(df.columns),0))
-    df = df.dropna(axis=0, thresh=threshold)
+def remove_outliers(df, k, col_list):
+    ''' remove outliers from a list of columns in a dataframe 
+        and return that dataframe
+    '''
+    
+    for col in col_list:
+
+        q1, q3 = df[f'{col}'].quantile([.25, .75])  # get quartiles
+        
+        iqr = q3 - q1   # calculate interquartile range
+        
+        upper_bound = q3 + k * iqr   # get upper bound
+        lower_bound = q1 - k * iqr   # get lower bound
+
+        # return dataframe without outliers
+        
+        return df[(df[f'{col}'] > lower_bound) & (df[f'{col}'] < upper_bound)]  
+    
+
+def handle_missing_values(df, prop_required_column = .5, prop_required_row = .5):
+    ''' 
+        take in a dataframe and a proportion for columns and rows
+        return dataframe with columns and rows not meeting proportions dropped
+    '''
+    col_thresh = int(round(prop_required_column*df.shape[0],0)) # calc column threshold
+    
+    df.dropna(axis=1, thresh=col_thresh, inplace=True) # drop columns with non-nulls less than threshold
+    
+    row_thresh = int(round(prop_required_row*df.shape[1],0))  # calc row threshhold
+    
+    df.dropna(axis=0, thresh=row_thresh, inplace=True) # drop columns with non-nulls less than threshold
+    
+    return df    
+    
+    
+def impute(df, my_strategy, column_list):
+    ''' take in a df strategy and cloumn list
+        return df with listed columns imputed using input stratagy
+    '''
+        
+    imputer = SimpleImputer(strategy=my_strategy)  # build imputer
+
+    df[column_list] = imputer.fit_transform(df[column_list]) # fit/transform selected columns
+
     return df
 
-def only_single_unit(df):
-    df_filtered = df[df['calculatedfinishedsquarefeet'] < 5000]
-    df_filtered = df_filtered[df_filtered['calculatedfinishedsquarefeet'] >=1000]
-    df_filtered = df_filtered[df_filtered['bedroomcnt'] >=3]
-    df_filtered = df_filtered[df_filtered['bedroomcnt'] <= 10]
-    df_filtered = df_filtered[df_filtered['bathroomcnt'] >2]
-    df_filtered = df_filtered[df_filtered['bathroomcnt'] <7]
-    return df_filtered
-
+def prepare_zillow(df):
+    ''' Prepare Zillow Data'''
+    
+    # Restrict propertylandusedesc to those of single unit
+    df = df[(df.propertylandusedesc == 'Single Family Residential') |
+          (df.propertylandusedesc == 'Mobile Home') |
+          (df.propertylandusedesc == 'Manufactured, Modular, Prefabricated Homes') |
+          (df.propertylandusedesc == 'Townhouse')]
+    
+    # remove outliers in bed count, bath count, and area to better target single unit properties
+    df = remove_outliers(df, 1.5, ['calculatedfinishedsquarefeet', 'bedroomcnt', 'bathroomcnt'])
+    
+    # dropping cols/rows where more than half of the values are null
+    df = handle_missing_values(df, prop_required_column = .5, prop_required_row = .5)
+    
+    # dropping the columns with 17K missing values too much to fill/impute/drop rows
+    df = df.drop(columns=['heatingorsystemtypeid', 'buildingqualitytypeid', 'propertyzoningdesc', 'unitcnt', 'heatingorsystemdesc'])
+    
+    # imputing descreet columns with most frequent value
+    df = impute(df, 'most_frequent', ['calculatedbathnbr', 'fullbathcnt', 'regionidcity', 'regionidzip', 'yearbuilt', 'censustractandblock'])
+    
+    # imputing continuous columns with median value
+    df = impute(df, 'median', ['finishedsquarefeet12', 'lotsizesquarefeet', 'structuretaxvaluedollarcnt', 'taxvaluedollarcnt', 'landtaxvaluedollarcnt', 'taxamount'])
+    
+    return df

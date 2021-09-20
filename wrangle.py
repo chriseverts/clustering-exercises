@@ -155,3 +155,14 @@ def split_mall_customers(df):
     train, validate = train_test_split(train_val, train_size =  0.7, random_state = 123)
     return train, validate, test
 
+def impute(df, my_strategy, column_list):
+    ''' 
+    This function takes in a df, strategy, and column list and
+    returns df with listed columns imputed using imputing stratagy
+    '''
+    # build imputer    
+    imputer = SimpleImputer(strategy=my_strategy)  
+    # fit/transform selected columns
+    df[column_list] = imputer.fit_transform(df[column_list]) 
+
+    return df
